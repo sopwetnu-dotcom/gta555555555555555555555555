@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GTA 2.5D Online</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a1a; touch-action: none; font-family: 'Courier New', Courier, monospace; user-select: none; }
+        canvas { display: block; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10;}
+        .hud-box { background: rgba(0, 0, 0, 0.75); border: 2px solid #444; border-radius: 8px; padding: 10px; pointer-events: auto;}
+        
+        /* Minimap */
+        #minimap-container { position: absolute; top: 20px; right: 20px; width: 150px; height: 150px; border: 3px solid #555; border-radius: 50%; overflow: hidden; background: #2a2a2a; pointer-events: auto;}
+        #minimapCanvas { width: 100%; height: 100%; }
+
+        /* Phone */
+        #phone-container { position: absolute; bottom: -600px; right: 20px; width: 300px; height: 500px; background: #111; border: 4px solid #333; border-radius: 30px; transition: bottom 0.3s ease-out; pointer-events: auto; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 0 20px rgba(0,0,0,0.8); z-index: 20;}
+        #phone-container.active { bottom: 20px; }
+        .phone-header { background: #222; padding: 10px; text-align: center; color: white; font-weight: bold; border-bottom: 1px solid #444; }
+        .phone-content { flex-grow: 1; overflow-y: auto; padding: 10px; background: #1a1a1a; color: white; }
+        .app-btn { width: 100%; padding: 12px; margin-bottom: 10px; background: #3b82f6; color: white; border-radius: 8px; text-align: center; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+        .app-btn:hover { background: #2563eb; }
+        .app-btn.casino { background: #8b5cf6; }
+        .app-btn.shop { background: #10b981; }
+        .app-btn.close { background: #ef4444; margin-top: auto; }
+
+        /* Mobile Controls */
+        #mobile-controls { position: absolute; bottom: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; display: none; }
+        .joy-zone { position: absolute; bottom: 20px; left: 20px; width: 150px; height: 150px; background: rgba(255,255,255,0.1); border-radius: 50%; pointer-events: auto; }
+        .joy-stick { position: absolute; top: 50px; left: 50px; width: 50px; height: 50px; background: rgba(255,255,255,0.5); border-radius: 50%; pointer-events: none; }
+        .action-btns { position: absolute; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 15px; pointer-events: auto; }
+        .btn { width: 60px; height: 60px; background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.5); border-radius: 50%; color: white; display: flex; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; cursor: pointer; }
+        .btn:active { background: rgba(255,255,255,0.4); }
+
+        @media (max-width: 768px) {
+            #mobile-controls { display: block; }
+            #minimap-container { top: 10px; right: 10px; width: 100px; height: 100px; }
+            #phone-container { width: 100%; height: 80%; right: 0; border-radius: 20px 20px 0 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-layer" class="p-4 flex flex-col justify-between">
+        <div class="flex justify-between items-start">
+            <div class="hud-box">
+                <div class="text-green-400 text-2xl font-bold" id="money-display">$ 0</div>
+                <div class="text-red-400 text-sm font-bold" id="hp-display">HP: 100</div>
+            </div>
+        </div>
+
+        <div class="flex justify-center mb-8 pointer-events-none">
+            <div id="msg-display" class="hud-box text-white font-bold text-xl hidden transition-opacity duration-200">
+                НАЖМИТЕ [F]
+            </div>
+        </div>
+    </div>
+
+    <!-- Minimap -->
+    <div id="minimap-container">
+        <canvas id="minimapCanvas"></canvas>
+    </div>
+
+    <!-- Mobile Controls -->
+    <div id="mobile-controls">
+        <div class="joy-zone" id="joystick-area">
+            <div class="joy-stick" id="joystick-knob"></div>
+        </div>
+        <div class="action-btns">
+            <div class="btn" id="btn-phone" style="background: #3b82f6;">📱</div>
+            <div class="btn" id="btn-shoot" style="background: #ef4444;">🎯</div>
+            <div class="btn" id="btn-action">F</div>
+        </div>
+    </div>
+
+    <!-- Phone UI -->
+    <div id="phone-container">
+        <div class="phone-header">iFruit OS</div>
+        <div class="phone-content" id="phone-home">
+            <div class="app-btn" onclick="openApp('missions')">📝 Миссии</div>
+            <div class="app-btn shop" onclick="openApp('shop')">🚗 Автосалон</div>
+            <div class="app-btn casino" onclick="openApp('casino')">🎲 Казино</div>
+            <div style="flex-grow: 1;"></div>
+            <div class="app-btn close" onclick="togglePhone()">Выключить</div>
+        </div>
+        
+        <div class="phone-content hidden" id="phone-missions" style="display: none;">
+            <h2 class="font-bold mb-4">Доступные контракты:</h2>
+            <div id="mission-list"></div>
+            <div class="app-btn close mt-4" onclick="openApp('home')">Назад</div>
+        </div>
+
+        <div class="phone-content hidden" id="phone-shop" style="display: none;">
+            <h2 class="font-bold mb-4">Luxury Autos</h2>
+            <div id="car-list"></div>
+            <div class="app-btn close mt-4" onclick="openApp('home')">Назад</div>
+        </div>
+
+        <div class="phone-content hidden" id="phone-casino" style="display: none;">
+            <h2 class="font-bold mb-4 text-center">Diamond Casino</h2>
+            <p class="text-sm text-gray-400 mb-4 text-center">Крути рулетку! Ставка: $500</p>
+            <div class="text-4xl text-center mb-6" id="casino-result">🎰</div>
+            <div class="app-btn casino" onclick="playCasino()">Сделать ставку ($500)</div>
+            <div class="app-btn close mt-4" onclick="openApp('home')">Назад</div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Firebase Setup для Netlify ---
+        // ВНИМАНИЕ: Замените эти данные на данные вашего Firebase проекта!
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        let app, auth, db;
+        let currentUser = null;
+
+        try { 
+            // Инициализация будет работать, когда вы вставите свои ключи
+            if(firebaseConfig.apiKey !== "YOUR_API_KEY") {
+                app = initializeApp(firebaseConfig); 
+                auth = getAuth(app); 
+                db = getFirestore(app); 
+            } else {
+                console.warn("Пожалуйста, добавьте ваши ключи Firebase в firebaseConfig!");
+            }
+        } catch (e) {
+            console.error("Ошибка инициализации Firebase:", e);
+        }
+
+        // --- Core Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        const minimapCanvas = document.getElementById('minimapCanvas');
+        const mCtx = minimapCanvas.getContext('2d');
+        let width, height;
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+            minimapCanvas.width = 150;
+            minimapCanvas.height = 150;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- Game Data ---
+        const WORLD_SIZE = 6000;
+        const CULL_MARGIN = 200;
+        let lastSync = 0;
+        
+        const CAR_TYPES = [
+            { id: 0, name: 'Седан', price: 0, color: '#3b82f6', maxSpeed: 12, accel: 0.4, handling: 0.15, w: 44, h: 24, type: 'sedan' },
+            { id: 1, name: 'Такси', price: 1500, color: '#facc15', maxSpeed: 11, accel: 0.35, handling: 0.12, w: 44, h: 24, type: 'sedan' },
+            { id: 2, name: 'Пикап', price: 3000, color: '#991b1b', maxSpeed: 10, accel: 0.3, handling: 0.1, w: 50, h: 26, type: 'truck' },
+            { id: 3, name: 'Спорткар', price: 10000, color: '#ef4444', maxSpeed: 18, accel: 0.7, handling: 0.2, w: 42, h: 22, type: 'sport' },
+            { id: 4, name: 'Ламба', price: 25000, color: '#fbbf24', maxSpeed: 22, accel: 0.9, handling: 0.25, w: 40, h: 20, type: 'sport' },
+            { id: 5, name: 'Фургон', price: 8000, color: '#f3f4f6', maxSpeed: 9, accel: 0.2, handling: 0.08, w: 55, h: 28, type: 'van' },
+        ];
+
+        let house = { x: 400, y: 400, w: 200, h: 200 };
+
+        let player = {
+            id: null, 
+            x: house.x + house.w / 2,
+            y: house.y + house.h + 60,
+            angle: 0, color: '#3b82f6', speed: 0, isDriving: false, 
+            carId: null, carType: 0, money: 500, hp: 100, radius: 12
+        };
+
+        let remotePlayers = {};
+        let parkedCars = {};
+        let buildings = [];
+        let grassTufts = [];
+        let npcs = [];
+        let bullets = [];
+        let particles = [];
+
+        let currentMission = null;
+        const keys = {};
+        let joyDir = { x: 0, y: 0 };
+        let actionTriggered = false;
+        let shootTriggered = false;
+        
+        const uiMoney = document.getElementById('money-display');
+        const uiHp = document.getElementById('hp-display');
+        const uiMsg = document.getElementById('msg-display');
+
+        // Input Listeners
+        window.addEventListener('keydown', e => { 
+            keys[e.code] = true; 
+            if(e.code === 'KeyT') togglePhone();
+            if(e.code === 'KeyF') actionTriggered = true;
+            if(e.code === 'Space') shootTriggered = true;
+        });
+        window.addEventListener('keyup', e => { 
+            keys[e.code] = false; 
+            if(e.code === 'KeyF') actionTriggered = false;
+            if(e.code === 'Space') shootTriggered = false;
+        });
+        
+        window.addEventListener('mousedown', e => { if(e.target === canvas) shootTriggered = true; });
+        window.addEventListener('mouseup', e => { shootTriggered = false; });
+
+        // Mobile Joystick
+        const joyZone = document.getElementById('joystick-area');
+        const joyKnob = document.getElementById('joystick-knob');
+        let joyActive = false;
+        let joyCenter = { x: 0, y: 0 };
+
+        joyZone.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.changedTouches[0];
+            const rect = joyZone.getBoundingClientRect();
+            joyCenter = { x: rect.left + rect.width/2, y: rect.top + rect.height/2 };
+            joyActive = true;
+            updateJoystick(touch.clientX, touch.clientY);
+        }, {passive: false});
+
+        joyZone.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if(!joyActive) return;
+            const touch = e.changedTouches[0];
+            updateJoystick(touch.clientX, touch.clientY);
+        }, {passive: false});
+
+        joyZone.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            joyActive = false;
+            joyDir = { x: 0, y: 0 };
+            joyKnob.style.transform = `translate(0px, 0px)`;
+        });
+
+        function updateJoystick(tx, ty) {
+            let dx = tx - joyCenter.x;
+            let dy = ty - joyCenter.y;
+            let dist = Math.hypot(dx, dy);
+            let maxDist = 50;
+            if(dist > maxDist) { dx = (dx / dist) * maxDist; dy = (dy / dist) * maxDist; }
+            joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+            joyDir = { x: dx / maxDist, y: dy / maxDist };
+        }
+
+        document.getElementById('btn-action').addEventListener('touchstart', (e)=>{ e.preventDefault(); actionTriggered = true; });
+        document.getElementById('btn-action').addEventListener('touchend', (e)=>{ e.preventDefault(); actionTriggered = false; });
+        document.getElementById('btn-shoot').addEventListener('touchstart', (e)=>{ e.preventDefault(); shootTriggered = true; });
+        document.getElementById('btn-shoot').addEventListener('touchend', (e)=>{ e.preventDefault(); shootTriggered = false; });
+        document.getElementById('btn-phone').addEventListener('touchstart', (e)=>{ e.preventDefault(); togglePhone(); });
+
+        // --- Generators ---
+        function generateWorld() {
+            buildings.push({x: house.x, y: house.y, w: house.w, h: house.h, color: '#2d3748', roof: '#4a5568', isHouse: true});
+            for(let i=0; i<150; i++) {
+                let w = 150 + Math.random() * 250;
+                let h = 150 + Math.random() * 250;
+                let x = Math.floor((Math.random() * (WORLD_SIZE - w - 200) + 100) / 150) * 150;
+                let y = Math.floor((Math.random() * (WORLD_SIZE - h - 200) + 100) / 150) * 150;
+                let overlap = false;
+                for (let b of buildings) {
+                    if (x < b.x + b.w + 60 && x + w + 60 > b.x && y < b.y + b.h + 60 && y + h + 60 > b.y) { overlap = true; break; }
+                }
+                if (!overlap) {
+                    let shades = ['#555', '#666', '#444', '#718096', '#4a5568'];
+                    let roofs = ['#444', '#555', '#333', '#4a5568', '#2d3748'];
+                    let rIdx = Math.floor(Math.random()*shades.length);
+                    buildings.push({x, y, w, h, color: shades[rIdx], roof: roofs[rIdx]});
+                }
+            }
+            for(let i=0; i<3000; i++) { grassTufts.push({ x: Math.random() * WORLD_SIZE, y: Math.random() * WORLD_SIZE, type: Math.random() > 0.5 ? 1 : 2 }); }
+            for(let i=0; i<50; i++) { spawnNPC(); }
+        }
+
+        function spawnNPC() {
+            let x, y, valid = false;
+            while(!valid) {
+                x = Math.random() * WORLD_SIZE;
+                y = Math.random() * WORLD_SIZE;
+                valid = !checkCollision(x, y, 15);
+            }
+            npcs.push({ x, y, angle: Math.random()*Math.PI*2, speed: 1 + Math.random(), state: 'walk', hp: 30 });
+        }
+
+        function spawnParkedCar(x, y, typeId) {
+            const carId = 'car_' + Math.random().toString(36).substr(2, 9);
+            const angle = Math.random() * Math.PI * 2;
+            if(currentUser && db) {
+                setDoc(doc(db, 'cars', carId), { x, y, angle, type: typeId }).catch(()=>{});
+            } else {
+                parkedCars[carId] = { x, y, angle, type: typeId };
+            }
+        }
+
+        function seedCars() {
+            for(let i=0; i<30; i++) {
+                let x, y, valid = false;
+                while(!valid) {
+                    x = Math.random() * WORLD_SIZE;
+                    y = Math.random() * WORLD_SIZE;
+                    valid = !checkCollision(x, y, 30);
+                }
+                let r = Math.random();
+                let type = 0;
+                if(r>0.6) type = 1;
+                if(r>0.8) type = 2;
+                if(r>0.9) type = 5;
+                spawnParkedCar(x, y, type);
+            }
+        }
+
+        // --- Mechanics ---
+        function checkCollision(px, py, radius) {
+            if (px < 0 || px > WORLD_SIZE || py < 0 || py > WORLD_SIZE) return true;
+            for (let b of buildings) {
+                if (px + radius > b.x && px - radius < b.x + b.w && py + radius > b.y && py - radius < b.y + b.h) return true;
+            }
+            return false;
+        }
+
+        function slideCollision(oldX, oldY, newX, newY, radius) {
+            if (!checkCollision(newX, newY, radius)) return { x: newX, y: newY, hit: false };
+            if (!checkCollision(newX, oldY, radius)) return { x: newX, y: oldY, hit: true };
+            if (!checkCollision(oldX, newY, radius)) return { x: oldX, y: newY, hit: true };
+            return { x: oldX, y: oldY, hit: true };
+        }
+
+        function toggleCar() {
+            if (player.isDriving) {
+                player.isDriving = false;
+                player.speed = 0;
+                spawnParkedCar(player.x, player.y, player.carType);
+                player.x += Math.cos(player.angle + Math.PI/2) * 25;
+                player.y += Math.sin(player.angle + Math.PI/2) * 25;
+            } else {
+                let closest = null, minDist = 60;
+                for (const id in parkedCars) {
+                    let car = parkedCars[id];
+                    let d = Math.hypot(car.x - player.x, car.y - player.y);
+                    if (d < minDist) { minDist = d; closest = id; }
+                }
+                if (closest) {
+                    let car = parkedCars[closest];
+                    player.isDriving = true;
+                    player.x = car.x; player.y = car.y; player.angle = car.angle;
+                    player.carType = car.type || 0;
+                    player.speed = 0;
+                    if (currentUser && db) deleteDoc(doc(db, 'cars', closest)).catch(()=>{});
+                    else delete parkedCars[closest];
+                }
+            }
+        }
+
+        function shoot() {
+            if(player.isDriving) return;
+            let bx = player.x + Math.cos(player.angle)*20;
+            let by = player.y + Math.sin(player.angle)*20;
+            bullets.push({x: bx, y: by, angle: player.angle, speed: 25, life: 30});
+            player.x -= Math.cos(player.angle)*2;
+            player.y -= Math.sin(player.angle)*2;
+            particles.push({x: bx, y: by, type: 'flash', life: 5});
+        }
+
+        function spawnBlood(x, y) {
+            for(let i=0; i<5; i++) {
+                particles.push({ x, y, vx: (Math.random()-0.5)*5, vy: (Math.random()-0.5)*5, life: 20 + Math.random()*20, type: 'blood' });
+            }
+        }
+
+        // --- Phone ---
+        window.togglePhone = () => {
+            const el = document.getElementById('phone-container');
+            if(el.classList.contains('active')) el.classList.remove('active');
+            else { el.classList.add('active'); openApp('home'); }
+        };
+
+        window.openApp = (appId) => {
+            document.querySelectorAll('.phone-content').forEach(el => el.style.display = 'none');
+            document.getElementById(`phone-${appId}`).style.display = 'block';
+            if(appId === 'missions') generateMissionsUI();
+            if(appId === 'shop') generateShopUI();
+        };
+
+        window.playCasino = () => {
+            if(player.money >= 500) {
+                player.money -= 500;
+                let win = Math.random() > 0.7;
+                let resEl = document.getElementById('casino-result');
+                if(win) {
+                    let prize = 1000 + Math.floor(Math.random()*4000);
+                    player.money += prize;
+                    resEl.innerText = `🎰 ВЫИГРЫШ $${prize}!`;
+                    resEl.style.color = '#10b981';
+                } else {
+                    resEl.innerText = `💸 ПРОИГРЫШ`;
+                    resEl.style.color = '#ef4444';
+                }
+                updateHUD();
+            } else { document.getElementById('casino-result').innerText = `Недостаточно средств!`; }
+        };
+
+        window.buyCar = (idx) => {
+            let c = CAR_TYPES[idx];
+            if(player.money >= c.price) {
+                player.money -= c.price;
+                spawnParkedCar(player.x + 50, player.y + 50, idx);
+                togglePhone();
+                showMessage("Машина доставлена рядом с вами!");
+                updateHUD();
+            } else { alert("Не хватает денег!"); }
+        };
+
+        window.startMission = (typeStr, reward) => {
+            let tx, ty, valid=false;
+            while(!valid){
+                tx = Math.random() * WORLD_SIZE;
+                ty = Math.random() * WORLD_SIZE;
+                valid = !checkCollision(tx, ty, 50) && Math.hypot(tx-player.x, ty-player.y) > 1000;
+            }
+            currentMission = { type: typeStr, targetX: tx, targetY: ty, reward: reward };
+            togglePhone();
+            showMessage(`Контракт принят: ${typeStr}`);
+        };
+
+        function generateMissionsUI() {
+            let html = '';
+            const types = ['Доставка груза', 'Устранение цели', 'Забрать долг', 'Угон авто'];
+            for(let i=0; i<5; i++) {
+                let type = types[Math.floor(Math.random()*types.length)];
+                let reward = 500 + Math.floor(Math.random()*2000);
+                html += `
+                    <div class="p-3 bg-gray-800 rounded mb-2 border border-gray-600 cursor-pointer hover:bg-gray-700 transition" onclick="startMission('${type}', ${reward})">
+                        <div class="font-bold text-blue-400">${type}</div>
+                        <div class="text-sm text-gray-300">Награда: $${reward}</div>
+                    </div>
+                `;
+            }
+            document.getElementById('mission-list').innerHTML = html;
+        }
+
+        function generateShopUI() {
+            let html = '';
+            CAR_TYPES.forEach((c, idx) => {
+                html += `
+                    <div class="flex justify-between items-center p-3 bg-gray-800 rounded mb-2 border border-gray-600">
+                        <div>
+                            <div class="font-bold" style="color: ${c.color}">${c.name}</div>
+                            <div class="text-sm text-gray-300">$${c.price}</div>
+                        </div>
+                        <button class="bg-green-600 px-3 py-1 rounded font-bold hover:bg-green-500" onclick="buyCar(${idx})">Купить</button>
+                    </div>
+                `;
+            });
+            document.getElementById('car-list').innerHTML = html;
+        }
+
+        let msgTimer = null;
+        function showMessage(text) {
+            uiMsg.innerText = text;
+            uiMsg.style.display = 'block';
+            clearTimeout(msgTimer);
+            msgTimer = setTimeout(() => { uiMsg.style.display = 'none'; }, 3000);
+        }
+
+        function updateHUD() {
+            uiMoney.innerText = `$ ${player.money}`;
+            uiHp.innerText = `HP: ${Math.floor(player.hp)}`;
+            uiHp.style.color = player.hp > 50 ? '#4ade80' : '#f87171';
+        }
+
+        function update() {
+            if(Math.hypot(player.x - (house.x + house.w/2), player.y - (house.y + house.h/2)) < 150) {
+                if(player.hp < 100) player.hp += 0.05;
+            }
+
+            let moveX = 0, moveY = 0;
+            let pSpeed = player.isDriving ? 0 : 4;
+            if (keys['KeyW'] || keys['ArrowUp']) moveY -= 1;
+            if (keys['KeyS'] || keys['ArrowDown']) moveY += 1;
+            if (keys['KeyA'] || keys['ArrowLeft']) moveX -= 1;
+            if (keys['KeyD'] || keys['ArrowRight']) moveX += 1;
+            if (joyActive) { moveX = joyDir.x; moveY = joyDir.y; }
+
+            let radius = player.isDriving ? 20 : player.radius;
+            let oldX = player.x, oldY = player.y;
+
+            if (player.isDriving) {
+                let ct = CAR_TYPES[player.carType];
+                if (moveY < 0) player.speed += ct.accel;
+                if (moveY > 0) player.speed -= ct.accel * 1.5;
+                player.speed *= 0.93;
+                if (Math.abs(player.speed) > ct.maxSpeed) player.speed = Math.sign(player.speed) * ct.maxSpeed;
+                if (Math.abs(player.speed) > 0.5 && moveX !== 0) player.angle += moveX * ct.handling * Math.sign(player.speed);
+                player.x += Math.cos(player.angle) * player.speed;
+                player.y += Math.sin(player.angle) * player.speed;
+            } else {
+                if (moveX !== 0 || moveY !== 0) {
+                    let len = Math.hypot(moveX, moveY);
+                    player.x += (moveX/len) * pSpeed;
+                    player.y += (moveY/len) * pSpeed;
+                    player.angle = Math.atan2(moveY, moveX);
+                }
+            }
+
+            let safe = slideCollision(oldX, oldY, player.x, player.y, radius);
+            player.x = safe.x; player.y = safe.y;
+            if(safe.hit && player.isDriving) player.speed *= 0.5;
+
+            if (actionTriggered) { actionTriggered = false; toggleCar(); }
+            if (shootTriggered && !player.isDriving) { shootTriggered = false; shoot(); }
+
+            let showF = false;
+            if (player.isDriving) showF = true;
+            else {
+                for(const id in parkedCars) {
+                    if (Math.hypot(parkedCars[id].x - player.x, parkedCars[id].y - player.y) < 60) { showF = true; break; }
+                }
+            }
+            if(uiMsg.innerText === "НАЖМИТЕ [F]" || !uiMsg.style.display || uiMsg.style.display === 'none') {
+                if(showF) { uiMsg.innerText = "НАЖМИТЕ [F]"; uiMsg.style.display = 'block'; }
+                else uiMsg.style.display = 'none';
+            }
+
+            if (currentMission) {
+                if (Math.hypot(player.x - currentMission.targetX, player.y - currentMission.targetY) < 80) {
+                    player.money += currentMission.reward;
+                    showMessage(`Миссия выполнена! +$${currentMission.reward}`);
+                    currentMission = null;
+                }
+            }
+
+            updateEntities();
+            updateHUD();
+
+            if (currentUser && db && Date.now() - lastSync > 150) {
+                lastSync = Date.now();
+                setDoc(doc(db, 'players', currentUser.uid), {
+                    x: Math.round(player.x), y: Math.round(player.y), angle: Number(player.angle.toFixed(2)),
+                    isDriving: player.isDriving, carType: player.carType, color: player.color, ts: Date.now()
+                }).catch(()=>{});
+            }
+
+            if(player.hp <= 0) {
+                player.hp = 100; player.x = house.x + 100; player.y = house.y + house.h + 60;
+                player.isDriving = false; player.money = Math.max(0, player.money - 500);
+                showMessage("Вы погибли. Больничный счет: $500");
+            }
+        }
+
+        function updateEntities() {
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                let b = bullets[i];
+                b.x += Math.cos(b.angle) * b.speed;
+                b.y += Math.sin(b.angle) * b.speed;
+                b.life--;
+                let hit = false;
+                if (checkCollision(b.x, b.y, 2)) hit = true;
+                if(!hit) {
+                    for(let j=0; j<npcs.length; j++) {
+                        let npc = npcs[j];
+                        if(Math.hypot(b.x - npc.x, b.y - npc.y) < 15) {
+                            npc.hp -= 35; hit = true; spawnBlood(npc.x, npc.y); break;
+                        }
+                    }
+                }
+                if (hit || b.life <= 0) bullets.splice(i, 1);
+            }
+            for (let i = npcs.length - 1; i >= 0; i--) {
+                let npc = npcs[i];
+                if(npc.hp <= 0) {
+                    if(Math.random()>0.5) player.money += 25;
+                    npcs.splice(i, 1);
+                    setTimeout(spawnNPC, 5000);
+                    continue;
+                }
+                let nx = npc.x + Math.cos(npc.angle) * npc.speed;
+                let ny = npc.y + Math.sin(npc.angle) * npc.speed;
+                if (checkCollision(nx, ny, 12)) npc.angle += Math.PI/2 + (Math.random()-0.5);
+                else { npc.x = nx; npc.y = ny; }
+                if(Math.random() < 0.01) npc.angle += (Math.random()-0.5);
+            }
+            for(let i=particles.length-1; i>=0; i--) {
+                let p = particles[i];
+                p.life--;
+                if(p.vx) { p.x+=p.vx; p.y+=p.vy; p.vx*=0.9; p.vy*=0.9; }
+                if(p.life <= 0) particles.splice(i,1);
+            }
+            const now = Date.now();
+            for (const id in remotePlayers) {
+                let rp = remotePlayers[id];
+                if (now - rp.ts > 5000) { delete remotePlayers[id]; continue; }
+                rp.x += (rp.tx - rp.x) * 0.2; rp.y += (rp.ty - rp.y) * 0.2;
+                let dA = rp.tAngle - rp.angle;
+                while(dA > Math.PI) dA -= Math.PI*2;
+                while(dA < -Math.PI) dA += Math.PI*2;
+                rp.angle += dA * 0.2;
+            }
+        }
+
+        // --- Drawing ---
+        function drawCar(ctx, x, y, angle, typeIdx) {
+            let ct = CAR_TYPES[typeIdx] || CAR_TYPES[0];
+            ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
+            ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(-ct.w/2 - 2, -ct.h/2 - 2, ct.w + 4, ct.h + 4);
+            ctx.fillStyle = ct.color; ctx.fillRect(-ct.w/2, -ct.h/2, ct.w, ct.h);
+            ctx.fillStyle = '#111'; ctx.fillRect(-ct.w/4, -ct.h/2 + 2, ct.w/2, ct.h - 4);
+            ctx.fillStyle = ct.color; ctx.fillRect(-ct.w/4 + 2, -ct.h/2 + 4, ct.w/2 - 4, ct.h - 8);
+            if(ct.type === 'truck') { ctx.fillStyle = '#222'; ctx.fillRect(-ct.w/2 + 2, -ct.h/2 + 2, ct.w/3, ct.h - 4); }
+            if(ct.type === 'sport') { ctx.fillStyle = '#000'; ctx.fillRect(-ct.w/2, -2, ct.w, 4); }
+            if(typeIdx === 1) { ctx.fillStyle = '#000'; for(let i=-ct.w/2; i<ct.w/2; i+=8) ctx.fillRect(i, -ct.h/2, 4, 2); }
+            ctx.fillStyle = '#fffaaa'; ctx.fillRect(ct.w/2 - 2, -ct.h/2 + 2, 2, 4); ctx.fillRect(ct.w/2 - 2, ct.h/2 - 6, 2, 4);
+            ctx.fillStyle = '#ff0000'; ctx.fillRect(-ct.w/2, -ct.h/2 + 2, 2, 4); ctx.fillRect(-ct.w/2, ct.h/2 - 6, 2, 4);
+            ctx.restore();
+        }
+
+        function drawCharacter(ctx, x, y, angle, color, hasGun=false) {
+            ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
+            ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.arc(-2, 2, 14, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = color; ctx.beginPath(); ctx.ellipse(0, 0, 10, 16, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#fca5a5'; ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#333'; ctx.beginPath(); ctx.arc(-2, 0, 8, -Math.PI/2, Math.PI/2); ctx.fill();
+            ctx.fillStyle = '#fca5a5';
+            if(hasGun) {
+                ctx.beginPath(); ctx.arc(12, 10, 4, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(10, -8, 4, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#444'; ctx.fillRect(10, 8, 12, 4);
+            } else {
+                ctx.beginPath(); ctx.arc(4, 14, 4, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(4, -14, 4, 0, Math.PI*2); ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function drawFaux3DBuilding(ctx, b, cx, cy) {
+            let scale = 0.25;
+            let rx1 = b.x + (b.x - cx) * scale;
+            let ry1 = b.y + (b.y - cy) * scale;
+            let rx2 = b.x + b.w + (b.x + b.w - cx) * scale;
+            let ry2 = b.y + b.h + (b.y + b.h - cy) * scale;
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.beginPath(); ctx.moveTo(b.x + 20, b.y + 20); ctx.lineTo(b.x + b.w + 20, b.y + 20); ctx.lineTo(b.x + b.w + 20, b.y + b.h + 20); ctx.lineTo(b.x + 20, b.y + b.h + 20); ctx.fill();
+            ctx.fillStyle = b.color; ctx.strokeStyle = '#222'; ctx.lineWidth = 1;
+            if (b.x > cx) { ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(rx1, ry1); ctx.lineTo(rx1, ry2); ctx.lineTo(b.x, b.y+b.h); ctx.fill(); ctx.stroke(); }
+            if (b.x + b.w < cx) { ctx.beginPath(); ctx.moveTo(b.x+b.w, b.y); ctx.lineTo(rx2, ry1); ctx.lineTo(rx2, ry2); ctx.lineTo(b.x+b.w, b.y+b.h); ctx.fill(); ctx.stroke(); }
+            if (b.y > cy) { ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(rx1, ry1); ctx.lineTo(rx2, ry1); ctx.lineTo(b.x+b.w, b.y); ctx.fill(); ctx.stroke(); }
+            if (b.y + b.h < cy) { ctx.beginPath(); ctx.moveTo(b.x, b.y+b.h); ctx.lineTo(rx1, ry2); ctx.lineTo(rx2, ry2); ctx.lineTo(b.x+b.w, b.y+b.h); ctx.fill(); ctx.stroke(); }
+            ctx.fillStyle = b.roof;
+            ctx.beginPath(); ctx.moveTo(rx1, ry1); ctx.lineTo(rx2, ry1); ctx.lineTo(rx2, ry2); ctx.lineTo(rx1, ry2); ctx.fill(); ctx.stroke();
+            if(b.isHouse) { ctx.fillStyle = '#10b981'; ctx.fillRect(rx1 + (rx2-rx1)/2 - 10, ry1 + (ry2-ry1)/2 - 10, 20, 20); }
+        }
+
+        function drawWorld() {
+            let cx = player.x, cy = player.y;
+            ctx.fillStyle = '#2a2d34'; ctx.fillRect(0, 0, width, height);
+            ctx.save(); ctx.translate(width / 2 - cx, height / 2 - cy);
+            ctx.strokeStyle = '#3a4a3a'; ctx.lineWidth = 2;
+            for(let g of grassTufts) {
+                if (g.x > cx - width/2 && g.x < cx + width/2 && g.y > cy - height/2 && g.y < cy + height/2) {
+                    ctx.beginPath(); ctx.moveTo(g.x, g.y); ctx.lineTo(g.x + (g.type===1?4:-4), g.y - 6); ctx.stroke();
+                }
+            }
+            ctx.fillStyle = 'rgba(16, 185, 129, 0.1)'; ctx.fillRect(house.x - 50, house.y - 50, house.w + 100, house.h + 100);
+            if (currentMission) {
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.4)'; ctx.beginPath(); ctx.arc(currentMission.targetX, currentMission.targetY, 60, 0, Math.PI*2); ctx.fill();
+            }
+            for (const id in parkedCars) {
+                let car = parkedCars[id];
+                if (car.x > cx - width/2 && car.x < cx + width/2 && car.y > cy - height/2 && car.y < cy + height/2) drawCar(ctx, car.x, car.y, car.angle, car.type || 0);
+            }
+            for(let npc of npcs) drawCharacter(ctx, npc.x, npc.y, npc.angle, '#9ca3af');
+            for (const id in remotePlayers) {
+                let rp = remotePlayers[id];
+                if(rp.isDriving) drawCar(ctx, rp.x, rp.y, rp.angle, rp.carType);
+                else drawCharacter(ctx, rp.x, rp.y, rp.angle, rp.color, true);
+            }
+            if (player.isDriving) drawCar(ctx, player.x, player.y, player.angle, player.carType);
+            else drawCharacter(ctx, player.x, player.y, player.angle, player.color, true);
+            for(let p of particles) {
+                if(p.type === 'blood') { ctx.fillStyle = `rgba(180, 0, 0, ${p.life/40})`; ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI*2); ctx.fill(); }
+                else if (p.type === 'flash') { ctx.fillStyle = 'yellow'; ctx.beginPath(); ctx.arc(p.x, p.y, p.life*2, 0, Math.PI*2); ctx.fill(); }
+            }
+            ctx.fillStyle = '#fff'; for(let b of bullets) { ctx.beginPath(); ctx.arc(b.x, b.y, 2, 0, Math.PI*2); ctx.fill(); }
+            let visibleBuildings = buildings.filter(b => !(b.x > cx + width/2 + CULL_MARGIN || b.x + b.w < cx - width/2 - CULL_MARGIN || b.y > cy + height/2 + CULL_MARGIN || b.y + b.h < cy - height/2 - CULL_MARGIN));
+            visibleBuildings.sort((a,b) => (a.y+a.h) - (b.y+b.h));
+            for (let b of visibleBuildings) drawFaux3DBuilding(ctx, b, cx, cy);
+            if (currentMission) {
+                let dx = currentMission.targetX - player.x, dy = currentMission.targetY - player.y;
+                if (Math.hypot(dx, dy) > 300) {
+                    ctx.save(); ctx.translate(player.x, player.y); ctx.rotate(Math.atan2(dy, dx));
+                    ctx.fillStyle = 'rgba(59, 130, 246, 0.8)'; ctx.beginPath(); ctx.moveTo(80, 0); ctx.lineTo(60, -15); ctx.lineTo(60, 15); ctx.fill(); ctx.restore();
+                }
+            }
+            ctx.restore();
+        }
+
+        function drawMinimap() {
+            mCtx.fillStyle = '#111'; mCtx.fillRect(0, 0, 150, 150);
+            mCtx.save(); mCtx.translate(75, 75); mCtx.scale(0.02, 0.02); mCtx.translate(-player.x, -player.y);
+            mCtx.fillStyle = '#444'; for(let b of buildings) mCtx.fillRect(b.x, b.y, b.w, b.h);
+            mCtx.fillStyle = '#10b981'; mCtx.fillRect(house.x, house.y, house.w, house.h);
+            if(currentMission) { mCtx.fillStyle = '#3b82f6'; mCtx.beginPath(); mCtx.arc(currentMission.targetX, currentMission.targetY, 150, 0, Math.PI*2); mCtx.fill(); }
+            mCtx.fillStyle = '#ef4444'; mCtx.beginPath(); mCtx.arc(player.x, player.y, 100, 0, Math.PI*2); mCtx.fill();
+            mCtx.restore();
+        }
+
+        function loop() { update(); drawWorld(); drawMinimap(); requestAnimationFrame(loop); }
+
+        async function init() {
+            generateWorld();
+            const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6'];
+            player.color = colors[Math.floor(Math.random()*colors.length)];
+            
+            player.x = house.x + house.w / 2;
+            player.y = house.y + house.h + 60;
+
+            if(auth && db) {
+                try {
+                    await signInAnonymously(auth);
+                    onAuthStateChanged(auth, user => {
+                        if(user) {
+                            currentUser = user;
+                            seedCars();
+                            onSnapshot(collection(db, 'cars'), snap => {
+                                let cars = {}; snap.forEach(d => cars[d.id] = d.data()); parkedCars = cars;
+                            }, (e) => console.log("Car sync error", e));
+                            onSnapshot(collection(db, 'players'), snap => {
+                                snap.forEach(d => {
+                                    if(d.id !== user.uid) {
+                                        let data = d.data();
+                                        if(remotePlayers[d.id]) {
+                                            let rp = remotePlayers[d.id];
+                                            rp.tx = data.x; rp.ty = data.y; rp.tAngle = data.angle;
+                                            rp.isDriving = data.isDriving; rp.carType = data.carType; rp.ts = Date.now();
+                                        } else {
+                                            remotePlayers[d.id] = { x: data.x, y: data.y, angle: data.angle, tx: data.x, ty: data.y, tAngle: data.angle, isDriving: data.isDriving, carType: data.carType, color: data.color, ts: Date.now() };
+                                        }
+                                    }
+                                });
+                            }, (err) => console.error("Player sync error", err));
+                        }
+                    });
+                } catch(e) { 
+                    seedCars();
+                }
+            } else {
+                seedCars(); // Если Firebase не инициализирован, спавним машины локально
+            }
+
+            loop();
+            showMessage("Вы появились перед домом. Нажмите [T] для телефона.");
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
